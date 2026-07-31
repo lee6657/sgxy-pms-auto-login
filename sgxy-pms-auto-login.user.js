@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         基建系统自动登录
 // @namespace    https://docs.scriptcat.org/
-// @version      4.1.3
+// @version      4.1.4
 // @description  自动填写账号密码、OCR识别验证码、自动点击登录，并提供悬浮配置入口
 // @author       You
 // @match        https://www.sgxy-pms.sgcc.com.cn:20443/webauth/login.html
@@ -43,6 +43,7 @@
     let floatingButton = null;
     let nextOcrAttemptAt = 0;
     let observedCaptchaImage = null;
+    let captchaImageVersion = 0;
     let lastLoginClickAt = 0;
     let lastSubmittedCaptcha = '';
     let captchaErrorVisibleAtSubmit = false;
@@ -406,7 +407,9 @@
 
         if (observedCaptchaImage !== captchaImg) {
             observedCaptchaImage = captchaImg;
+            captchaImageVersion += 1;
             captchaImg.addEventListener('load', () => {
+                captchaImageVersion += 1;
                 nextOcrAttemptAt = 0;
                 hasSubmitted = false;
                 lastLoginClickAt = 0;
@@ -455,15 +458,36 @@
             if (!userField.value) fillInput(userField, config.username);
             if (!passField.value) fillInput(passField, config.password);
 
+            const captchaVersionAtOcrStart = captchaImageVersion;
+            const captchaSourceAtOcrStart = captchaImg.currentSrc || captchaImg.src;
             const code = await solveCaptcha(captchaImg, config);
             if (code.length !== 4) {
                 nextOcrAttemptAt = Date.now() + OCR_RETRY_DELAY_MS;
                 throw new Error(`验证码识别结果长度异常: ${code || '空结果'}`);
             }
 
+            const captchaImageChanged = () => (
+                captchaImageVersion !== captchaVersionAtOcrStart ||
+                (captchaImg.currentSrc || captchaImg.src) !== captchaSourceAtOcrStart
+            );
+
+            if (captchaImageChanged()) {
+                fillInput(captchaField, '');
+                nextOcrAttemptAt = 0;
+                console.log('[基建自动登录] 验证码图片在识别期间已刷新，丢弃旧识别结果。');
+                return;
+            }
+
             nextOcrAttemptAt = 0;
             fillInput(captchaField, code);
             await new Promise((resolve) => setTimeout(resolve, LOGIN_CLICK_DELAY_MS));
+
+            if (captchaImageChanged()) {
+                fillInput(captchaField, '');
+                nextOcrAttemptAt = 0;
+                console.log('[基建自动登录] 验证码图片在登录前已刷新，取消本次登录并重新识别。');
+                return;
+            }
 
             if (captchaField.value.trim().toLowerCase() !== code.toLowerCase()) {
                 throw new Error('验证码在等待期间发生变化，已取消自动点击登录');
