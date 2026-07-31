@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         基建系统自动登录
 // @namespace    https://docs.scriptcat.org/
-// @version      4.1.1
+// @version      4.1.2
 // @description  自动填写账号密码、OCR识别验证码、自动点击登录，并提供悬浮配置入口
 // @author       You
 // @match        https://www.sgxy-pms.sgcc.com.cn:20443/webauth/login.html
@@ -30,6 +30,8 @@
     const DEFAULT_MODEL = 'qwen3-vl-flash';
     const DEFAULT_API_URL = 'https://api.zetatechs.com/v1/chat/completions';
     const OCR_RETRY_DELAY_MS = 10000;
+    const FORM_SCAN_INTERVAL_MS = 300;
+    const LOGIN_CLICK_DELAY_MS = 2000;
 
     let isProcessing = false;
     let hasSubmitted = false;
@@ -203,6 +205,7 @@
             settingsPrompted = true;
             closeSettingsDialog();
             refreshFloatingButton();
+            setTimeout(runAutoLogin, 0);
             console.log('[基建自动登录] 设置已保存，仅存储在本机脚本猫中。');
         });
 
@@ -361,7 +364,7 @@
         });
     }
 
-    setInterval(async () => {
+    async function runAutoLogin() {
         const config = getConfig();
         if (!hasCompleteConfig(config)) {
             if (!settingsPrompted) {
@@ -390,6 +393,7 @@
             observedCaptchaImage = captchaImg;
             captchaImg.addEventListener('load', () => {
                 nextOcrAttemptAt = 0;
+                setTimeout(runAutoLogin, 0);
             });
         }
 
@@ -425,7 +429,11 @@
 
             nextOcrAttemptAt = 0;
             fillInput(captchaField, code);
-            await new Promise((resolve) => setTimeout(resolve, 300));
+            await new Promise((resolve) => setTimeout(resolve, LOGIN_CLICK_DELAY_MS));
+
+            if (captchaField.value.trim().toLowerCase() !== code.toLowerCase()) {
+                throw new Error('验证码在等待期间发生变化，已取消自动点击登录');
+            }
 
             const loginButton = findLoginButton();
             if (!loginButton) throw new Error('未找到登录按钮');
@@ -439,5 +447,8 @@
         } finally {
             isProcessing = false;
         }
-    }, 1000);
+    }
+
+    runAutoLogin();
+    setInterval(runAutoLogin, FORM_SCAN_INTERVAL_MS);
 })();
