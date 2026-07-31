@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         基建系统自动登录
 // @namespace    https://docs.scriptcat.org/
-// @version      4.1.2
+// @version      4.1.3
 // @description  自动填写账号密码、OCR识别验证码、自动点击登录，并提供悬浮配置入口
 // @author       You
 // @match        https://www.sgxy-pms.sgcc.com.cn:20443/webauth/login.html
@@ -32,6 +32,8 @@
     const OCR_RETRY_DELAY_MS = 10000;
     const FORM_SCAN_INTERVAL_MS = 300;
     const LOGIN_CLICK_DELAY_MS = 2000;
+    const CAPTCHA_ERROR_CONFIRM_DELAY_MS = 3000;
+    const CAPTCHA_ERROR_PATTERN = /(验证码错误|验证码不正确|验证码有误|请输入正确的验证码)/;
 
     let isProcessing = false;
     let hasSubmitted = false;
@@ -41,6 +43,9 @@
     let floatingButton = null;
     let nextOcrAttemptAt = 0;
     let observedCaptchaImage = null;
+    let lastLoginClickAt = 0;
+    let lastSubmittedCaptcha = '';
+    let captchaErrorVisibleAtSubmit = false;
 
     function getConfig() {
         return {
@@ -54,6 +59,10 @@
 
     function hasCompleteConfig(config) {
         return Boolean(config.username && config.password && config.model && config.apiKey && config.apiUrl);
+    }
+
+    function hasCaptchaErrorText() {
+        return CAPTCHA_ERROR_PATTERN.test(document.body?.innerText || '');
     }
 
     function normalizeApiUrl(value) {
@@ -202,6 +211,9 @@
             GM_setValue(STORAGE_KEYS.apiUrl, apiUrl);
             hasSubmitted = false;
             nextOcrAttemptAt = 0;
+            lastLoginClickAt = 0;
+            lastSubmittedCaptcha = '';
+            captchaErrorVisibleAtSubmit = false;
             settingsPrompted = true;
             closeSettingsDialog();
             refreshFloatingButton();
@@ -224,6 +236,9 @@
             status.textContent = '本地配置已清空。';
             hasSubmitted = false;
             nextOcrAttemptAt = 0;
+            lastLoginClickAt = 0;
+            lastSubmittedCaptcha = '';
+            captchaErrorVisibleAtSubmit = false;
             refreshFloatingButton();
         });
 
@@ -393,15 +408,34 @@
             observedCaptchaImage = captchaImg;
             captchaImg.addEventListener('load', () => {
                 nextOcrAttemptAt = 0;
+                hasSubmitted = false;
+                lastLoginClickAt = 0;
+                lastSubmittedCaptcha = '';
+                captchaErrorVisibleAtSubmit = false;
                 setTimeout(runAutoLogin, 0);
             });
         }
 
-        const pageText = document.body?.innerText || '';
-        const captchaError = /(验证码错误|验证码不正确|验证码有误|请输入正确的验证码)/.test(pageText);
+        const captchaError = hasCaptchaErrorText();
+        if (hasSubmitted && !captchaError && captchaErrorVisibleAtSubmit) {
+            captchaErrorVisibleAtSubmit = false;
+        }
+
         if (hasSubmitted && captchaError) {
+            const responseDelayElapsed = Date.now() - lastLoginClickAt >= CAPTCHA_ERROR_CONFIRM_DELAY_MS;
+            const captchaStillMatches = Boolean(
+                lastSubmittedCaptcha &&
+                captchaField.value.trim().toLowerCase() === lastSubmittedCaptcha.toLowerCase()
+            );
+
+            // 忽略提交前就存在的旧错误提示，并给登录请求留出响应时间。
+            if (captchaErrorVisibleAtSubmit || !responseDelayElapsed || !captchaStillMatches) return;
+
             console.log('[基建自动登录] 验证码错误，刷新后重试。');
             hasSubmitted = false;
+            lastLoginClickAt = 0;
+            lastSubmittedCaptcha = '';
+            captchaErrorVisibleAtSubmit = false;
             fillInput(captchaField, '');
             nextOcrAttemptAt = Date.now() + 1000;
             captchaImg.click();
@@ -438,6 +472,9 @@
             const loginButton = findLoginButton();
             if (!loginButton) throw new Error('未找到登录按钮');
 
+            captchaErrorVisibleAtSubmit = hasCaptchaErrorText();
+            lastSubmittedCaptcha = code;
+            lastLoginClickAt = Date.now();
             hasSubmitted = true;
             console.log('[基建自动登录] 正在自动点击登录按钮。');
             loginButton.click();
