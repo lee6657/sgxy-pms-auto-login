@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         基建系统自动登录
-// @namespace    https://github.com/lee6657/sgxy-pms-auto-login
+// @namespace    https://docs.scriptcat.org/
 // @version      4.0.0
 // @description  自动填写账号密码、OCR识别验证码、自动点击登录，并支持验证码错误重试
 // @author       You
