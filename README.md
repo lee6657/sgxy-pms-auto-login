@@ -12,10 +12,13 @@ https://raw.githubusercontent.com/lee6657/sgxy-pms-auto-login/main/sgxy-pms-auto
 
 ## 使用
 
-1. 首次打开目标登录页时，填写账号、密码和 OCR API Key。
-2. 设置只保存在本机 ScriptCat 存储中，不会上传到 GitHub。
-3. 后续可从 ScriptCat 的脚本菜单中选择“设置账号、密码和 OCR API Key”修改配置。
-4. 脚本会根据 `@updateURL` 自动检查新版本。
+1. 首次打开目标登录页时，点击右上角“自动登录”悬浮按钮。
+2. 填写账号、密码、OCR 模型、API Key 和中转站地址。
+3. 模型既可以从常用名称中选择，也可以直接输入中转站支持的自定义模型名。
+4. 中转站可填写域名、以 `/v1` 结尾的地址，或完整的 `/v1/chat/completions` 地址。
+5. 设置只保存在本机 ScriptCat 存储中，不会上传到 GitHub。
+6. 后续也可从 ScriptCat 的脚本菜单中选择“打开自动登录设置”修改配置。
+7. 脚本会根据 `@updateURL` 自动检查新版本。
 
 ## 安全说明
 
