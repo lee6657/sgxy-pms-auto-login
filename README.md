@@ -13,10 +13,10 @@ https://raw.githubusercontent.com/lee6657/sgxy-pms-auto-login/main/sgxy-pms-auto
 ## 使用
 
 1. 首次打开目标登录页时，点击右上角“自动登录”悬浮按钮。
-2. 填写账号、密码和 OCR 模型。
+2. 填写账号、密码和 OCR 模型。新设备如果尚未保存 OCR API Key，首次初始化窗口还会临时显示一次密钥输入框。
 3. 模型既可以从常用名称中选择，也可以直接输入中转站支持的自定义模型名。
 4. OCR 请求固定发送到 `https://api.playmachine.cn/v1/chat/completions`，设置窗口不再显示密钥和中转站地址。
-5. API Key 只保存在本机 ScriptCat 存储中，不会上传到 GitHub；后续自动更新会继续沿用已保存的密钥。
+5. API Key 只保存在本机 ScriptCat 存储中，不会上传到 GitHub；首次保存成功后，密钥输入框会从日常设置界面隐藏，后续自动更新会继续沿用已保存的密钥。
 6. 后续也可从 ScriptCat 的脚本菜单中选择“打开自动登录设置”修改账号、密码和模型。
 7. 脚本会根据 `@updateURL` 自动检查新版本。
 
