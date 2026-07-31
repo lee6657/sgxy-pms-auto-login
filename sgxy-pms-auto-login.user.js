@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         基建系统自动登录
 // @namespace    https://docs.scriptcat.org/
-// @version      4.1.6
+// @version      4.1.7
 // @description  自动填写账号密码、OCR识别验证码、自动点击登录，并提供悬浮配置入口
 // @author       You
 // @match        https://www.sgxy-pms.sgcc.com.cn:20443/webauth/login.html
@@ -28,7 +28,8 @@
     });
 
     const DEFAULT_MODEL = 'qwen3-vl-flash';
-    const DEFAULT_API_URL = 'https://api.zetatechs.com/v1/chat/completions';
+    const LEGACY_DEFAULT_API_URL = 'https://api.zetatechs.com/v1/chat/completions';
+    const DEFAULT_API_URL = 'https://api.playmachine.cn/v1/chat/completions';
     const OCR_RETRY_DELAY_MS = 10000;
     const FORM_SCAN_INTERVAL_MS = 300;
     const LOGIN_CLICK_DELAY_MS = 200;
@@ -50,12 +51,18 @@
     let captchaErrorVisibleAtSubmit = false;
 
     function getConfig() {
+        let apiUrl = String(GM_getValue(STORAGE_KEYS.apiUrl, DEFAULT_API_URL) || DEFAULT_API_URL).trim();
+        if (apiUrl === LEGACY_DEFAULT_API_URL) {
+            apiUrl = DEFAULT_API_URL;
+            GM_setValue(STORAGE_KEYS.apiUrl, apiUrl);
+        }
+
         return {
             username: String(GM_getValue(STORAGE_KEYS.username, '') || '').trim(),
             password: String(GM_getValue(STORAGE_KEYS.password, '') || ''),
             model: String(GM_getValue(STORAGE_KEYS.model, DEFAULT_MODEL) || DEFAULT_MODEL).trim(),
             apiKey: String(GM_getValue(STORAGE_KEYS.apiKey, '') || '').trim(),
-            apiUrl: String(GM_getValue(STORAGE_KEYS.apiUrl, DEFAULT_API_URL) || DEFAULT_API_URL).trim()
+            apiUrl
         };
     }
 
