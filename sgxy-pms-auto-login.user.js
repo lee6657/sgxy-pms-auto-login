@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         基建系统自动登录
 // @namespace    https://docs.scriptcat.org/
-// @version      4.1.8
+// @version      4.1.9
 // @description  自动填写账号密码、OCR识别验证码、自动点击登录，并提供悬浮配置入口
 // @author       You
 // @match        https://www.sgxy-pms.sgcc.com.cn:20443/webauth/login.html
@@ -98,6 +98,7 @@
         if (settingsHost || !document.documentElement) return;
 
         const current = getConfig();
+        const needsApiKey = !current.apiKey;
         const host = document.createElement('div');
         const shadow = host.attachShadow({ mode: 'closed' });
         settingsHost = host;
@@ -153,7 +154,9 @@
             <div class="overlay">
                 <form class="panel">
                     <h2>基建系统自动登录设置</h2>
-                    <p class="hint">这里只需设置登录账号、密码和 OCR 模型。密钥保存在脚本猫本地存储中，中转站地址由脚本固定。</p>
+                    <p class="hint">${needsApiKey
+                        ? '这是本设备首次初始化，请同时填写 OCR API Key。保存后密钥只存储在本机，之后不会再显示该输入项。'
+                        : '这里只需设置登录账号、密码和 OCR 模型。密钥保存在脚本猫本地存储中，中转站地址由脚本固定。'}</p>
                     <label>登录账号<input name="username" type="text" autocomplete="off"></label>
                     <label>登录密码<input name="password" type="password" autocomplete="new-password"></label>
                     <label>OCR 模型<input name="model" type="text" list="model-options" autocomplete="off"></label>
@@ -164,6 +167,10 @@
                         <option value="gpt-4o-mini"></option>
                         <option value="gpt-4.1-mini"></option>
                     </datalist>
+                    ${needsApiKey ? `
+                        <label>首次初始化 OCR API Key<input name="apiKey" type="password" autocomplete="off"></label>
+                        <p class="field-hint">仅首次在这台设备上需要填写；保存后不会出现在日常设置界面中。</p>
+                    ` : ''}
                     <div class="status"></div>
                     <div class="actions">
                         <button class="danger" type="button" data-action="clear">清空配置</button>
@@ -178,6 +185,7 @@
         const usernameInput = shadow.querySelector("input[name='username']");
         const passwordInput = shadow.querySelector("input[name='password']");
         const modelInput = shadow.querySelector("input[name='model']");
+        const apiKeyInput = shadow.querySelector("input[name='apiKey']");
         const status = shadow.querySelector('.status');
 
         usernameInput.value = current.username;
@@ -189,14 +197,18 @@
             const username = usernameInput.value.trim();
             const password = passwordInput.value;
             const model = modelInput.value.trim();
-            if (!username || !password || !model) {
-                status.textContent = '账号、密码和模型都必须填写。';
+            const apiKey = apiKeyInput ? apiKeyInput.value.trim() : current.apiKey;
+            if (!username || !password || !model || !apiKey) {
+                status.textContent = needsApiKey
+                    ? '账号、密码、模型和首次初始化 API Key 都必须填写。'
+                    : '账号、密码和模型都必须填写。';
                 return;
             }
 
             GM_setValue(STORAGE_KEYS.username, username);
             GM_setValue(STORAGE_KEYS.password, password);
             GM_setValue(STORAGE_KEYS.model, model);
+            GM_setValue(STORAGE_KEYS.apiKey, apiKey);
             hasSubmitted = false;
             nextOcrAttemptAt = 0;
             lastLoginClickAt = 0;
