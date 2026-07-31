@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         基建系统自动登录
 // @namespace    https://docs.scriptcat.org/
-// @version      4.1.0
+// @version      4.1.1
 // @description  自动填写账号密码、OCR识别验证码、自动点击登录，并提供悬浮配置入口
 // @author       You
 // @match        https://www.sgxy-pms.sgcc.com.cn:20443/webauth/login.html
@@ -29,6 +29,7 @@
 
     const DEFAULT_MODEL = 'qwen3-vl-flash';
     const DEFAULT_API_URL = 'https://api.zetatechs.com/v1/chat/completions';
+    const OCR_RETRY_DELAY_MS = 10000;
 
     let isProcessing = false;
     let hasSubmitted = false;
@@ -36,6 +37,8 @@
     let settingsPrompted = false;
     let floatingButtonHost = null;
     let floatingButton = null;
+    let nextOcrAttemptAt = 0;
+    let observedCaptchaImage = null;
 
     function getConfig() {
         return {
@@ -196,6 +199,7 @@
             GM_setValue(STORAGE_KEYS.apiKey, apiKey);
             GM_setValue(STORAGE_KEYS.apiUrl, apiUrl);
             hasSubmitted = false;
+            nextOcrAttemptAt = 0;
             settingsPrompted = true;
             closeSettingsDialog();
             refreshFloatingButton();
@@ -216,6 +220,7 @@
             apiUrlInput.value = DEFAULT_API_URL;
             status.textContent = '本地配置已清空。';
             hasSubmitted = false;
+            nextOcrAttemptAt = 0;
             refreshFloatingButton();
         });
 
@@ -381,17 +386,31 @@
 
         if (!userField || !passField || !captchaField || !captchaImg) return;
 
+        if (observedCaptchaImage !== captchaImg) {
+            observedCaptchaImage = captchaImg;
+            captchaImg.addEventListener('load', () => {
+                nextOcrAttemptAt = 0;
+            });
+        }
+
         const pageText = document.body?.innerText || '';
         const captchaError = /(验证码错误|验证码不正确|验证码有误|请输入正确的验证码)/.test(pageText);
         if (hasSubmitted && captchaError) {
             console.log('[基建自动登录] 验证码错误，刷新后重试。');
             hasSubmitted = false;
             fillInput(captchaField, '');
+            nextOcrAttemptAt = Date.now() + 1000;
             captchaImg.click();
             return;
         }
 
-        if (isProcessing || hasSubmitted || !captchaImg.complete || !captchaImg.naturalWidth) return;
+        if (
+            isProcessing ||
+            hasSubmitted ||
+            Date.now() < nextOcrAttemptAt ||
+            !captchaImg.complete ||
+            !captchaImg.naturalWidth
+        ) return;
         isProcessing = true;
 
         try {
@@ -400,10 +419,11 @@
 
             const code = await solveCaptcha(captchaImg, config);
             if (code.length !== 4) {
-                captchaImg.click();
+                nextOcrAttemptAt = Date.now() + OCR_RETRY_DELAY_MS;
                 throw new Error(`验证码识别结果长度异常: ${code || '空结果'}`);
             }
 
+            nextOcrAttemptAt = 0;
             fillInput(captchaField, code);
             await new Promise((resolve) => setTimeout(resolve, 300));
 
@@ -414,6 +434,7 @@
             console.log('[基建自动登录] 正在自动点击登录按钮。');
             loginButton.click();
         } catch (error) {
+            nextOcrAttemptAt = Math.max(nextOcrAttemptAt, Date.now() + OCR_RETRY_DELAY_MS);
             console.error('[基建自动登录] 执行失败:', error);
         } finally {
             isProcessing = false;
