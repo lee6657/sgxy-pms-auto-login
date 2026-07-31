@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         基建系统自动登录
 // @namespace    https://docs.scriptcat.org/
-// @version      4.1.5
+// @version      4.1.6
 // @description  自动填写账号密码、OCR识别验证码、自动点击登录，并提供悬浮配置入口
 // @author       You
 // @match        https://www.sgxy-pms.sgcc.com.cn:20443/webauth/login.html
@@ -31,7 +31,8 @@
     const DEFAULT_API_URL = 'https://api.zetatechs.com/v1/chat/completions';
     const OCR_RETRY_DELAY_MS = 10000;
     const FORM_SCAN_INTERVAL_MS = 300;
-    const LOGIN_CLICK_DELAY_MS = 300;
+    const LOGIN_CLICK_DELAY_MS = 200;
+    const LOGIN_FOCUS_SETTLE_MS = 100;
     const CAPTCHA_ERROR_CONFIRM_DELAY_MS = 3000;
     const CAPTCHA_ERROR_PATTERN = /(验证码错误|验证码不正确|验证码有误|请输入正确的验证码)/;
 
@@ -495,6 +496,22 @@
 
             const loginButton = findLoginButton();
             if (!loginButton) throw new Error('未找到登录按钮');
+
+            // 真实鼠标点击会先让验证码输入框失焦；部分页面只在 blur/focusout 时提交内部表单值。
+            captchaField.blur();
+            loginButton.focus();
+            await new Promise((resolve) => setTimeout(resolve, LOGIN_FOCUS_SETTLE_MS));
+
+            if (captchaImageChanged()) {
+                fillInput(captchaField, '');
+                nextOcrAttemptAt = 0;
+                console.log('[基建自动登录] 验证码图片在登录按钮聚焦期间已刷新，取消本次登录。');
+                return;
+            }
+
+            if (captchaField.value.trim().toLowerCase() !== code.toLowerCase()) {
+                throw new Error('验证码在聚焦登录按钮期间发生变化，已取消自动点击登录');
+            }
 
             captchaErrorVisibleAtSubmit = hasCaptchaErrorText();
             lastSubmittedCaptcha = code;
