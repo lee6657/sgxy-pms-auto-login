@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         基建系统自动登录
 // @namespace    https://docs.scriptcat.org/
-// @version      4.1.7
+// @version      4.1.8
 // @description  自动填写账号密码、OCR识别验证码、自动点击登录，并提供悬浮配置入口
 // @author       You
 // @match        https://www.sgxy-pms.sgcc.com.cn:20443/webauth/login.html
@@ -23,13 +23,13 @@
         username: 'sgxy_pms_username',
         password: 'sgxy_pms_password',
         model: 'sgxy_pms_ocr_model',
-        apiKey: 'sgxy_pms_ocr_api_key',
-        apiUrl: 'sgxy_pms_ocr_api_url'
+        apiKey: 'sgxy_pms_ocr_api_key'
     });
 
     const DEFAULT_MODEL = 'qwen3-vl-flash';
-    const LEGACY_DEFAULT_API_URL = 'https://api.zetatechs.com/v1/chat/completions';
-    const DEFAULT_API_URL = 'https://api.playmachine.cn/v1/chat/completions';
+    const OCR_API_URL = 'https://api.playmachine.cn/v1/chat/completions';
+    // 公开更新文件必须保留占位符；个人安装文件会在本机注入密钥并保存到 ScriptCat 存储。
+    const EMBEDDED_API_KEY = 'YOUR_API_KEY';
     const OCR_RETRY_DELAY_MS = 10000;
     const FORM_SCAN_INTERVAL_MS = 300;
     const LOGIN_CLICK_DELAY_MS = 200;
@@ -50,38 +50,36 @@
     let lastSubmittedCaptcha = '';
     let captchaErrorVisibleAtSubmit = false;
 
-    function getConfig() {
-        let apiUrl = String(GM_getValue(STORAGE_KEYS.apiUrl, DEFAULT_API_URL) || DEFAULT_API_URL).trim();
-        if (apiUrl === LEGACY_DEFAULT_API_URL) {
-            apiUrl = DEFAULT_API_URL;
-            GM_setValue(STORAGE_KEYS.apiUrl, apiUrl);
+    function getApiKey() {
+        const embeddedApiKey = EMBEDDED_API_KEY.trim();
+        const hasEmbeddedApiKey = embeddedApiKey && embeddedApiKey !== 'YOUR_API_KEY';
+        const storedApiKey = String(GM_getValue(STORAGE_KEYS.apiKey, '') || '').trim();
+
+        if (hasEmbeddedApiKey) {
+            if (storedApiKey !== embeddedApiKey) {
+                GM_setValue(STORAGE_KEYS.apiKey, embeddedApiKey);
+            }
+            return embeddedApiKey;
         }
 
+        return storedApiKey;
+    }
+
+    function getConfig() {
         return {
             username: String(GM_getValue(STORAGE_KEYS.username, '') || '').trim(),
             password: String(GM_getValue(STORAGE_KEYS.password, '') || ''),
             model: String(GM_getValue(STORAGE_KEYS.model, DEFAULT_MODEL) || DEFAULT_MODEL).trim(),
-            apiKey: String(GM_getValue(STORAGE_KEYS.apiKey, '') || '').trim(),
-            apiUrl
+            apiKey: getApiKey()
         };
     }
 
     function hasCompleteConfig(config) {
-        return Boolean(config.username && config.password && config.model && config.apiKey && config.apiUrl);
+        return Boolean(config.username && config.password && config.model && config.apiKey);
     }
 
     function hasCaptchaErrorText() {
         return CAPTCHA_ERROR_PATTERN.test(document.body?.innerText || '');
-    }
-
-    function normalizeApiUrl(value) {
-        const trimmed = String(value || '').trim().replace(/\/+$/, '');
-        if (!/^https?:\/\//i.test(trimmed)) {
-            throw new Error('中转站地址必须以 http:// 或 https:// 开头。');
-        }
-        if (/\/chat\/completions$/i.test(trimmed)) return trimmed;
-        if (/\/v1$/i.test(trimmed)) return `${trimmed}/chat/completions`;
-        return `${trimmed}/v1/chat/completions`;
     }
 
     function refreshFloatingButton() {
@@ -155,7 +153,7 @@
             <div class="overlay">
                 <form class="panel">
                     <h2>基建系统自动登录设置</h2>
-                    <p class="hint">设置只保存在脚本猫本地存储中，不会写入公开更新文件。可从右上角悬浮按钮或脚本猫菜单再次打开。</p>
+                    <p class="hint">这里只需设置登录账号、密码和 OCR 模型。密钥保存在脚本猫本地存储中，中转站地址由脚本固定。</p>
                     <label>登录账号<input name="username" type="text" autocomplete="off"></label>
                     <label>登录密码<input name="password" type="password" autocomplete="new-password"></label>
                     <label>OCR 模型<input name="model" type="text" list="model-options" autocomplete="off"></label>
@@ -166,9 +164,6 @@
                         <option value="gpt-4o-mini"></option>
                         <option value="gpt-4.1-mini"></option>
                     </datalist>
-                    <label>OCR API Key<input name="apiKey" type="password" autocomplete="off"></label>
-                    <label>中转站地址<input name="apiUrl" type="url" autocomplete="off"></label>
-                    <p class="field-hint">可填写域名、以 /v1 结尾的地址，或完整的 /v1/chat/completions 地址。</p>
                     <div class="status"></div>
                     <div class="actions">
                         <button class="danger" type="button" data-action="clear">清空配置</button>
@@ -183,41 +178,25 @@
         const usernameInput = shadow.querySelector("input[name='username']");
         const passwordInput = shadow.querySelector("input[name='password']");
         const modelInput = shadow.querySelector("input[name='model']");
-        const apiKeyInput = shadow.querySelector("input[name='apiKey']");
-        const apiUrlInput = shadow.querySelector("input[name='apiUrl']");
         const status = shadow.querySelector('.status');
 
         usernameInput.value = current.username;
         passwordInput.value = current.password;
         modelInput.value = current.model;
-        apiKeyInput.value = current.apiKey;
-        apiUrlInput.value = current.apiUrl;
 
         form.addEventListener('submit', (event) => {
             event.preventDefault();
             const username = usernameInput.value.trim();
             const password = passwordInput.value;
             const model = modelInput.value.trim();
-            const apiKey = apiKeyInput.value.trim();
-            let apiUrl;
-
-            if (!username || !password || !model || !apiKey || !apiUrlInput.value.trim()) {
-                status.textContent = '账号、密码、模型、API Key 和中转站地址都必须填写。';
-                return;
-            }
-
-            try {
-                apiUrl = normalizeApiUrl(apiUrlInput.value);
-            } catch (error) {
-                status.textContent = error.message;
+            if (!username || !password || !model) {
+                status.textContent = '账号、密码和模型都必须填写。';
                 return;
             }
 
             GM_setValue(STORAGE_KEYS.username, username);
             GM_setValue(STORAGE_KEYS.password, password);
             GM_setValue(STORAGE_KEYS.model, model);
-            GM_setValue(STORAGE_KEYS.apiKey, apiKey);
-            GM_setValue(STORAGE_KEYS.apiUrl, apiUrl);
             hasSubmitted = false;
             nextOcrAttemptAt = 0;
             lastLoginClickAt = 0;
@@ -235,14 +214,10 @@
             GM_deleteValue(STORAGE_KEYS.username);
             GM_deleteValue(STORAGE_KEYS.password);
             GM_deleteValue(STORAGE_KEYS.model);
-            GM_deleteValue(STORAGE_KEYS.apiKey);
-            GM_deleteValue(STORAGE_KEYS.apiUrl);
             usernameInput.value = '';
             passwordInput.value = '';
             modelInput.value = DEFAULT_MODEL;
-            apiKeyInput.value = '';
-            apiUrlInput.value = DEFAULT_API_URL;
-            status.textContent = '本地配置已清空。';
+            status.textContent = '账号、密码和模型已清空；OCR 密钥已保留。';
             hasSubmitted = false;
             nextOcrAttemptAt = 0;
             lastLoginClickAt = 0;
@@ -347,7 +322,7 @@
         return new Promise((resolve, reject) => {
             GM_xmlhttpRequest({
                 method: 'POST',
-                url: config.apiUrl,
+                url: OCR_API_URL,
                 headers: {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${config.apiKey}`
