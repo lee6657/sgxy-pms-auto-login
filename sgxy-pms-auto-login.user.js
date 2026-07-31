@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         基建系统自动登录
 // @namespace    https://docs.scriptcat.org/
-// @version      4.0.0
-// @description  自动填写账号密码、OCR识别验证码、自动点击登录，并支持验证码错误重试
+// @version      4.1.0
+// @description  自动填写账号密码、OCR识别验证码、自动点击登录，并提供悬浮配置入口
 // @author       You
 // @match        https://www.sgxy-pms.sgcc.com.cn:20443/webauth/login.html
 // @updateURL    https://raw.githubusercontent.com/lee6657/sgxy-pms-auto-login/main/sgxy-pms-auto-login.meta.js
@@ -12,7 +12,7 @@
 // @grant        GM_setValue
 // @grant        GM_deleteValue
 // @grant        GM_registerMenuCommand
-// @connect      api.zetatechs.com
+// @connect      *
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -22,24 +22,50 @@
     const STORAGE_KEYS = Object.freeze({
         username: 'sgxy_pms_username',
         password: 'sgxy_pms_password',
-        apiKey: 'sgxy_pms_ocr_api_key'
+        model: 'sgxy_pms_ocr_model',
+        apiKey: 'sgxy_pms_ocr_api_key',
+        apiUrl: 'sgxy_pms_ocr_api_url'
     });
+
+    const DEFAULT_MODEL = 'qwen3-vl-flash';
+    const DEFAULT_API_URL = 'https://api.zetatechs.com/v1/chat/completions';
 
     let isProcessing = false;
     let hasSubmitted = false;
     let settingsHost = null;
     let settingsPrompted = false;
+    let floatingButtonHost = null;
+    let floatingButton = null;
 
     function getConfig() {
         return {
             username: String(GM_getValue(STORAGE_KEYS.username, '') || '').trim(),
             password: String(GM_getValue(STORAGE_KEYS.password, '') || ''),
-            apiKey: String(GM_getValue(STORAGE_KEYS.apiKey, '') || '').trim()
+            model: String(GM_getValue(STORAGE_KEYS.model, DEFAULT_MODEL) || DEFAULT_MODEL).trim(),
+            apiKey: String(GM_getValue(STORAGE_KEYS.apiKey, '') || '').trim(),
+            apiUrl: String(GM_getValue(STORAGE_KEYS.apiUrl, DEFAULT_API_URL) || DEFAULT_API_URL).trim()
         };
     }
 
     function hasCompleteConfig(config) {
-        return Boolean(config.username && config.password && config.apiKey);
+        return Boolean(config.username && config.password && config.model && config.apiKey && config.apiUrl);
+    }
+
+    function normalizeApiUrl(value) {
+        const trimmed = String(value || '').trim().replace(/\/+$/, '');
+        if (!/^https?:\/\//i.test(trimmed)) {
+            throw new Error('中转站地址必须以 http:// 或 https:// 开头。');
+        }
+        if (/\/chat\/completions$/i.test(trimmed)) return trimmed;
+        if (/\/v1$/i.test(trimmed)) return `${trimmed}/chat/completions`;
+        return `${trimmed}/v1/chat/completions`;
+    }
+
+    function refreshFloatingButton() {
+        if (!floatingButton) return;
+        const configured = hasCompleteConfig(getConfig());
+        floatingButton.textContent = configured ? '⚙ 自动登录' : '⚙ 请先设置';
+        floatingButton.dataset.configured = String(configured);
     }
 
     function closeSettingsDialog() {
@@ -67,7 +93,7 @@
                     font-family: system-ui, -apple-system, "Microsoft YaHei", sans-serif;
                 }
                 .panel {
-                    width: min(420px, calc(100vw - 32px));
+                    width: min(460px, calc(100vw - 32px));
                     box-sizing: border-box;
                     padding: 24px;
                     border-radius: 16px;
@@ -89,6 +115,7 @@
                     outline: none;
                 }
                 input:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37, 99, 235, .12); }
+                .field-hint { margin: 5px 0 0; color: #64748b; font-size: 12px; line-height: 1.5; }
                 .status { min-height: 20px; margin-top: 12px; color: #dc2626; font-size: 13px; }
                 .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
                 button {
@@ -105,10 +132,20 @@
             <div class="overlay">
                 <form class="panel">
                     <h2>基建系统自动登录设置</h2>
-                    <p class="hint">设置只保存在脚本猫本地存储中，不会写入公开更新文件。可从脚本猫菜单再次打开。</p>
+                    <p class="hint">设置只保存在脚本猫本地存储中，不会写入公开更新文件。可从右上角悬浮按钮或脚本猫菜单再次打开。</p>
                     <label>登录账号<input name="username" type="text" autocomplete="off"></label>
                     <label>登录密码<input name="password" type="password" autocomplete="new-password"></label>
+                    <label>OCR 模型<input name="model" type="text" list="model-options" autocomplete="off"></label>
+                    <datalist id="model-options">
+                        <option value="qwen3-vl-flash"></option>
+                        <option value="qwen-vl-max"></option>
+                        <option value="qwen-vl-plus"></option>
+                        <option value="gpt-4o-mini"></option>
+                        <option value="gpt-4.1-mini"></option>
+                    </datalist>
                     <label>OCR API Key<input name="apiKey" type="password" autocomplete="off"></label>
+                    <label>中转站地址<input name="apiUrl" type="url" autocomplete="off"></label>
+                    <p class="field-hint">可填写域名、以 /v1 结尾的地址，或完整的 /v1/chat/completions 地址。</p>
                     <div class="status"></div>
                     <div class="actions">
                         <button class="danger" type="button" data-action="clear">清空配置</button>
@@ -122,30 +159,46 @@
         const form = shadow.querySelector('form');
         const usernameInput = shadow.querySelector("input[name='username']");
         const passwordInput = shadow.querySelector("input[name='password']");
+        const modelInput = shadow.querySelector("input[name='model']");
         const apiKeyInput = shadow.querySelector("input[name='apiKey']");
+        const apiUrlInput = shadow.querySelector("input[name='apiUrl']");
         const status = shadow.querySelector('.status');
 
         usernameInput.value = current.username;
         passwordInput.value = current.password;
+        modelInput.value = current.model;
         apiKeyInput.value = current.apiKey;
+        apiUrlInput.value = current.apiUrl;
 
         form.addEventListener('submit', (event) => {
             event.preventDefault();
             const username = usernameInput.value.trim();
             const password = passwordInput.value;
+            const model = modelInput.value.trim();
             const apiKey = apiKeyInput.value.trim();
+            let apiUrl;
 
-            if (!username || !password || !apiKey) {
-                status.textContent = '账号、密码和 API Key 都必须填写。';
+            if (!username || !password || !model || !apiKey || !apiUrlInput.value.trim()) {
+                status.textContent = '账号、密码、模型、API Key 和中转站地址都必须填写。';
+                return;
+            }
+
+            try {
+                apiUrl = normalizeApiUrl(apiUrlInput.value);
+            } catch (error) {
+                status.textContent = error.message;
                 return;
             }
 
             GM_setValue(STORAGE_KEYS.username, username);
             GM_setValue(STORAGE_KEYS.password, password);
+            GM_setValue(STORAGE_KEYS.model, model);
             GM_setValue(STORAGE_KEYS.apiKey, apiKey);
+            GM_setValue(STORAGE_KEYS.apiUrl, apiUrl);
             hasSubmitted = false;
             settingsPrompted = true;
             closeSettingsDialog();
+            refreshFloatingButton();
             console.log('[基建自动登录] 设置已保存，仅存储在本机脚本猫中。');
         });
 
@@ -153,19 +206,62 @@
         shadow.querySelector("[data-action='clear']").addEventListener('click', () => {
             GM_deleteValue(STORAGE_KEYS.username);
             GM_deleteValue(STORAGE_KEYS.password);
+            GM_deleteValue(STORAGE_KEYS.model);
             GM_deleteValue(STORAGE_KEYS.apiKey);
+            GM_deleteValue(STORAGE_KEYS.apiUrl);
             usernameInput.value = '';
             passwordInput.value = '';
+            modelInput.value = DEFAULT_MODEL;
             apiKeyInput.value = '';
+            apiUrlInput.value = DEFAULT_API_URL;
             status.textContent = '本地配置已清空。';
             hasSubmitted = false;
+            refreshFloatingButton();
         });
 
         document.documentElement.appendChild(host);
         usernameInput.focus();
     }
 
-    GM_registerMenuCommand('设置账号、密码和 OCR API Key', showSettingsDialog);
+    function createFloatingSettingsButton() {
+        if (floatingButtonHost || !document.documentElement) return;
+
+        const host = document.createElement('div');
+        const shadow = host.attachShadow({ mode: 'closed' });
+        floatingButtonHost = host;
+
+        shadow.innerHTML = `
+            <style>
+                button {
+                    position: fixed;
+                    top: 16px;
+                    right: 16px;
+                    z-index: 2147483646;
+                    padding: 9px 14px;
+                    border: 1px solid rgba(255, 255, 255, .35);
+                    border-radius: 999px;
+                    background: linear-gradient(135deg, #2563eb, #1d4ed8);
+                    color: #fff;
+                    box-shadow: 0 8px 24px rgba(37, 99, 235, .3);
+                    cursor: pointer;
+                    font: 600 13px/1.2 system-ui, -apple-system, "Microsoft YaHei", sans-serif;
+                    transition: transform .15s ease, box-shadow .15s ease, background .15s ease;
+                }
+                button:hover { transform: translateY(-1px); box-shadow: 0 10px 28px rgba(37, 99, 235, .38); }
+                button:active { transform: translateY(0); }
+                button[data-configured='false'] { background: linear-gradient(135deg, #f59e0b, #d97706); }
+            </style>
+            <button type="button" title="打开基建系统自动登录设置">⚙ 自动登录</button>
+        `;
+
+        floatingButton = shadow.querySelector('button');
+        floatingButton.addEventListener('click', showSettingsDialog);
+        document.documentElement.appendChild(host);
+        refreshFloatingButton();
+    }
+
+    GM_registerMenuCommand('打开自动登录设置', showSettingsDialog);
+    createFloatingSettingsButton();
 
     function fillInput(element, value) {
         if (!element) return;
@@ -207,7 +303,7 @@
         );
     }
 
-    async function solveCaptcha(imgElement, apiKey) {
+    async function solveCaptcha(imgElement, config) {
         const canvas = document.createElement('canvas');
         canvas.width = imgElement.naturalWidth || imgElement.width;
         canvas.height = imgElement.naturalHeight || imgElement.height;
@@ -219,13 +315,13 @@
         return new Promise((resolve, reject) => {
             GM_xmlhttpRequest({
                 method: 'POST',
-                url: 'https://api.zetatechs.com/v1/chat/completions',
+                url: config.apiUrl,
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${apiKey}`
+                    'Authorization': `Bearer ${config.apiKey}`
                 },
                 data: JSON.stringify({
-                    model: 'qwen3-vl-flash',
+                    model: config.model,
                     messages: [{
                         role: 'user',
                         content: [
@@ -302,7 +398,7 @@
             if (!userField.value) fillInput(userField, config.username);
             if (!passField.value) fillInput(passField, config.password);
 
-            const code = await solveCaptcha(captchaImg, config.apiKey);
+            const code = await solveCaptcha(captchaImg, config);
             if (code.length !== 4) {
                 captchaImg.click();
                 throw new Error(`验证码识别结果长度异常: ${code || '空结果'}`);
