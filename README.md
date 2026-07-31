@@ -20,6 +20,8 @@ https://raw.githubusercontent.com/lee6657/sgxy-pms-auto-login/main/sgxy-pms-auto
 6. 后续也可从 ScriptCat 的脚本菜单中选择“打开自动登录设置”修改配置。
 7. 脚本会根据 `@updateURL` 自动检查新版本。
 
+OCR 返回空结果或格式异常时，脚本会等待 10 秒后重试，不会主动连续刷新验证码。只有网站明确提示验证码错误时才会刷新验证码图片。
+
 ## 安全说明
 
 仓库中不包含账号、密码或 API Key。不要把包含个人配置的旧脚本或备份上传到公开仓库。
